@@ -15,7 +15,7 @@ from __future__ import annotations
 import functools
 import warnings
 from functools import cache
-from typing import Any
+from typing import Any, Callable, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -27,11 +27,11 @@ from mht.testing.leybourne_mccabe import Leybourne
 from mht.utils.decorators import ignore_unhashable
 
 
-def _ignore_warning(warning_type):
+def _ignore_warning(warning_type: type[Warning]) -> Callable:
     """Decorator: suppress a specific warning category inside the wrapped call."""
-    def inner(func):
+    def inner(func: Callable) -> Callable:
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore', category=warning_type)
                 return func(*args, **kwargs)
@@ -62,7 +62,7 @@ class MultipleHypTest:
         two_sides: bool = True,
         remove_zero_rows: bool = True,
         run_on_call: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         if remove_zero_rows:
             z_scores = z_scores[z_scores != 0].dropna()
@@ -80,7 +80,7 @@ class MultipleHypTest:
 
     @ignore_unhashable
     @cache
-    def p_values(self, z_scores, **kwargs) -> np.ndarray:
+    def p_values(self, z_scores: Any, **kwargs: Any) -> np.ndarray:
         """Convert z-scores to sorted p-values."""
         pvals = []
         if self.two_sides:
@@ -94,7 +94,7 @@ class MultipleHypTest:
     @ignore_unhashable
     @cache
     def benjamini_hochberg_yekutieli(
-        self, p_vals, method: str = 'hochberg', q: float = 0.05
+        self, p_vals: np.ndarray, method: str = 'hochberg', q: float = 0.05
     ) -> int:
         """Return 1 if H0 is rejected for at least one hypothesis, else 0."""
         if method == 'yekutieli':
@@ -120,9 +120,9 @@ class MultipleHypTest:
     def BHY(
         self,
         method: str = 'hochberg',
-        q: tuple = (0.1, 0.05, 0.01),
+        q: tuple[float, ...] = (0.1, 0.05, 0.01),
         ret: bool = False,
-    ) -> dict | None:
+    ) -> Optional[dict]:
         """Run the BHY procedure for each significance level in ``q``."""
         rejections: dict = {}
         for sig_level in q:
@@ -138,7 +138,7 @@ class MultipleHypTest:
             return rejections
         return None
 
-    def run(self, q: list | tuple = (0.1, 0.05, 0.01)) -> None:
+    def run(self, q: Union[list, tuple] = (0.1, 0.05, 0.01)) -> None:
         for method in ('hochberg', 'yekutieli'):
             print(f'MultipleHypTest@Self.run: running [{method}]...')
             self.BHY(method=method, q=tuple(q))
@@ -188,7 +188,7 @@ class UnitRootTest:
         processes: pd.DataFrame,
         remove_zero_rows: bool = True,
         run_on_call: bool = False,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         if remove_zero_rows:
             processes = processes[processes != np.nan].dropna()
@@ -210,7 +210,7 @@ class UnitRootTest:
     @ignore_unhashable
     @cache
     @_ignore_warning(UserWarning)
-    def _run_kpss(self, x: pd.DataFrame, **kwargs) -> None:
+    def _run_kpss(self, x: pd.DataFrame, **kwargs: Any) -> None:
         name: str = x.columns[0]
         result = kpss(x=x, **kwargs)
         self.p_values_kpss[name] = result[1]
@@ -218,19 +218,19 @@ class UnitRootTest:
     @ignore_unhashable
     @cache
     @_ignore_warning(UserWarning)
-    def _run_lm(self, x: pd.DataFrame, **kwargs) -> None:
+    def _run_lm(self, x: pd.DataFrame, **kwargs: Any) -> None:
         name: str = x.columns[0]
         result = Leybourne().run(x=x, **kwargs)
         self.p_values_lm[name] = result[1]
 
     @_ignore_warning(UserWarning)
-    def lm(self, **kwargs) -> None:
+    def lm(self, **kwargs: Any) -> None:
         for col in tqdm(self.processes.columns):
             self._run_lm(x=self.processes[[col]], **kwargs)
         self.p_values_lm = {'lm': self.p_values_lm}
 
     @_ignore_warning(UserWarning)
-    def kpss(self, **kwargs) -> None:
+    def kpss(self, **kwargs: Any) -> None:
         for col in tqdm(self.processes.columns):
             self._run_kpss(x=self.processes[[col]], **kwargs)
         self.p_values_kpss = {'kpss': self.p_values_kpss}
@@ -238,7 +238,7 @@ class UnitRootTest:
     @ignore_unhashable
     @cache
     @_ignore_warning(UserWarning)
-    def run(self, q: list | tuple = (0.1, 0.05, 0.01)) -> None:
+    def run(self, q: Union[list, tuple] = (0.1, 0.05, 0.01)) -> None:
         for method in ('kpss', 'lm'):
             print(f'MultipleHypTest@Self.run: running [{method}]...')
             getattr(self, method)()
@@ -255,7 +255,7 @@ class UnitRootTest:
         print('Finished'.center(70, '-'))
 
     @staticmethod
-    def _rejection_rate(p_vals: dict, q: float, n_pairs: float) -> float:
+    def _rejection_rate(p_vals: dict[str, float], q: float, n_pairs: float) -> float:
         rejections = 0
         p_vals1 = list(p_vals.values())[::2]
         p_vals2 = list(p_vals.values())[1::2]
@@ -302,7 +302,7 @@ class LaTeXTable:
         Number of simulation runs (used for Bernoulli SE calculation).
     """
 
-    def __init__(self, methods: dict, n: int = 200) -> None:
+    def __init__(self, methods: dict[str, Any], n: int = 200) -> None:
         self.methods = methods
         self.n = n
 
@@ -318,7 +318,7 @@ class LaTeXTable:
         """
         return s
 
-    def vals(self, *args) -> str:
+    def vals(self, *args: Any) -> str:
         return r"""
         50 & {} & {} & {} & {} & {} \\
            & ({}) & ({}) & ({}) & ({}) & ({}) \\
