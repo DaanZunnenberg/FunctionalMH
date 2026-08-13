@@ -20,45 +20,23 @@ The object of interest is the diffusion matrix $c(x) = \sigma(x)\sigma(x)^\top$.
 
 ### Key identification result
 
-Stationarity is identified through the empirical occupation measure
+The test relies on how much "occupation time" the process spends near any given point $x$ as more data arrives. A stationary process keeps revisiting every point in its state space at a rate proportional to the elapsed time $T$ (it has a well-defined long-run occupation density). A nonstationary process, by contrast, drifts away over time, so the time it spends near any fixed point grows more slowly than $T$. This difference in growth rate — proportional to $T$ under stationarity, sub-linear in $T$ under nonstationarity — is the statistical foothold the whole test is built on (Darling–Kac 1957; Meyn–Tweedie 2012).
 
-$$L_{n,T}(x) = \Delta_n \sum_{j=1}^n K_{h}(X_{t_j} - x).$$
+### Two estimators of the diffusion matrix
 
-By Darling–Kac (1957) and Meyn–Tweedie (2012), a stationary process satisfies $L_{n,T}(x) \asymp T$ for every $x$, while a nonstationary process has $L_{n,T}(x) = o_p(T)$. This difference in divergence rate is the foundation of the test.
+The test follows a Durbin–Wu–Hausman-style logic: build two different estimators of the same quantity — the diffusion (instantaneous covariance) matrix $c(x)$ — that should agree under stationarity but drift apart under nonstationarity, then test whether they actually agree.
 
-### Two estimators of $c(x)$
+**Time-domain smoother** (Jacod–Protter 2011): estimates $c(x)$ by locally averaging the outer products of consecutive increments in a short window of time around a point. This estimator's accuracy depends only on how many observations fall in that time window, not on whether the process is stationary — it converges at the same rate regardless of $H_0$ or $H_1$, so it serves as a stable, stationarity-invariant baseline.
 
-The test is a Durbin–Wu–Hausman-style comparison of two consistent estimators of $c(x)$ whose asymptotic speeds differ under $H_1$:
-
-**Time-domain smoother** (Jacod–Protter 2011): a local average of outer products of increments over a window of $k_n$ consecutive observations around a fixed time $t$,
-
-$$\hat{c}^n_{\mathrm{TD},t} = \frac{1}{\Delta_n k_n} \sum_{m=1}^{k_n} \Delta^m_n X_t \left(\Delta^m_n X_t\right)^\top, \qquad k_n^2 \Delta_n \to 0.$$
-
-Its central-limit rate is $\sqrt{k_n}$ regardless of stationarity, making it a stationarity-invariant baseline.
-
-**State-domain smoother** (Bandi–Moloche 2018): a Nadaraya–Watson kernel regression of squared increments on the state space,
-
-$$\hat{c}^n_{\mathrm{SD}}(x) = \frac{\displaystyle\sum_{j=1}^n K_{h_{n,T}}(X_{t_j} - x)\,(X_{t_j}-X_{t_{j-1}})(X_{t_j}-X_{t_{j-1}})^\top}{\Delta_n \displaystyle\sum_{j=1}^n K_{h_{n,T}}(X_{t_j} - x)},$$
-
-with near-optimal bandwidth $h_{n,T} \sim C / (n^{1/(d+4)} \log n)$. Its central-limit rate is $\sqrt{n h_{n,T}^d}$ under stationarity, but it diverges almost surely at that same rate when the process is nonstationary, because $T / L_{n,T}(x) \to \infty$.
+**State-domain smoother** (Bandi–Moloche 2018): estimates $c(x)$ by kernel-weighting squared increments according to how close the process's *value* is to $x$ (a Nadaraya–Watson-style regression in the state space, not the time domain), using a near-optimal bandwidth that shrinks as more data arrives. Under stationarity this estimator converges at a fast rate governed by how often the process revisits the neighborhood of $x$. Under nonstationarity, since the process no longer reliably revisits $x$, this estimator's error blows up at that same rate instead of shrinking.
 
 ### Test statistic
 
-Under stationarity the two estimators are asymptotically independent (proved via $\beta$-mixing), so their standardised difference
-
-$$Z_{t_j} = A\,\Sigma^{-1/2}(x) \sqrt{\frac{2n h_{n,T}^d}{d(d+1)}}\;\operatorname{vech}\!\left(\hat{c}^n_{\mathrm{SD}}(x) - \hat{c}^n_{\mathrm{TD},t_j}\right) \xrightarrow{d} \mathcal{N}(0,1)$$
-
-for every $t_j$ under $H_0$, and diverges almost surely under $H_1$. The time index is re-scaled to $t'_j = t_j / (\Delta_n k_n)$ to induce vanishing covariance $\gamma(s) = o(1/\log s)$ required by Berman (1964, 1982).
+Under $H_0$, the two estimators can be shown to be asymptotically independent (via a $\beta$-mixing argument), so their standardized difference behaves like a standard normal random variable at every point in time. Under $H_1$, because the state-domain estimator's error diverges while the time-domain estimator's does not, this standardized difference grows without bound instead of staying bounded. The time axis is rescaled so that the resulting sequence of standardized differences has vanishing correlation between distant points, which is what the extreme-value theory in the next step requires.
 
 ### Critical bound (running maximum)
 
-Because the full path $(Z_{t'_j})_{j=1,\dots,n}$ must be assessed jointly, the test uses the running maximum $\varphi_n = \max_{k \le n} |Z_{t'_k}|$. By Pickands (1969) / Berman (1964), for a stationary Gaussian sequence with vanishing correlations,
-
-$$a_n(\varphi_n - b_n) \xrightarrow{d} \mathrm{Gumbel}, \qquad a_n = \sqrt{2\log n}, \qquad b_n = a_n - \frac{\log\log n + \log\pi}{2a_n}.$$
-
-$H_0$ is rejected at level $\alpha$ when
-
-$$\varphi_n > b_n - \frac{\log\log\alpha^{-1}}{a_n}.$$
+Because the test statistic is really a whole path over time rather than a single number, the test looks at the largest absolute value the standardized difference ever reaches along that path (its running maximum). For a stationary sequence whose correlations vanish quickly enough, classical extreme-value theory (Pickands 1969; Berman 1964) tells us how that running maximum behaves as more data arrives: after a known rescaling, it converges in distribution to a Gumbel (extreme-value) distribution. This gives an explicit, data-driven threshold for the running maximum. $H_0$ is rejected at level $\alpha$ whenever the observed running maximum exceeds that threshold.
 
 ### Multiple-testing supplements
 
