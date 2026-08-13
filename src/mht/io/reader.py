@@ -3,6 +3,14 @@ CSV reader for pre-computed simulation results.
 
 The :class:`Reader` class loads local CSV files from the ``simulations/``
 directory.
+
+NOTE: CLAUDE.md's "Data Storage Constraints" section states that this
+framework must not read, parse, or process .csv/.xlsx/tabular files.
+This module contradicts that constraint (it exists specifically to read
+CSVs via pandas.read_csv). It is currently unreferenced by the rest of
+``src/mht`` and unused in tests -- flagged here rather than silently
+removed or "fixed", since resolving the contradiction is a product
+decision, not an engineering one.
 """
 from __future__ import annotations
 
@@ -11,6 +19,7 @@ from pathlib import Path
 from typing import MutableMapping
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from tqdm import tqdm
 
@@ -55,12 +64,15 @@ class Reader:
 
     def _read(self) -> None:
         for path in tqdm(self._files):
+            if not path.is_file():
+                raise FileNotFoundError(f"Simulation file not found: {path}")
             self.parsed_files[path.name] = pd.read_csv(
                 path, index_col=self.index_col
             )
 
     @staticmethod
-    def running_maximum(X) -> list:
+    def running_maximum(X: npt.ArrayLike) -> list[float]:
+        """Cumulative running maximum of ``|X|``."""
         return list(accumulate(np.abs(X), max))
 
     def __repr__(self) -> str:
