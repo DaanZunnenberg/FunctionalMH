@@ -7,7 +7,7 @@ name = "mht"
 version = "1.0.5"
 description = "Kernel-based stationarity test for multivariate diffusion processes (Hamrick-Taqqu)"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 dependencies = [
     "deprecated>=1.2",
