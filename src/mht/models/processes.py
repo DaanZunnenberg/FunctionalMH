@@ -14,14 +14,44 @@ BivariateCorrelatedDiffusion
 """
 from __future__ import annotations
 
+from typing import Any, Union
+
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 import matplotlib.pyplot as plt
+
+_COLUMNS: list[str] = ['process 1', 'process 2']
 
 
 def Fourier4(x: float, gamma: float) -> float:
     """Fourier-4 spectral density weight: 1 / (1 + x^2)^(2*gamma)."""
     return 1 / (1 + x ** 2) ** (2 * gamma)
+
+
+def _to_dataframe(x: npt.NDArray[np.floating], y: npt.NDArray[np.floating],
+                   name: str, **kwargs: Any) -> pd.DataFrame:
+    """Assemble a two-column bivariate-path DataFrame with a ``.name`` label."""
+    df = pd.DataFrame(np.column_stack([x, y]), columns=_COLUMNS)
+    df.name = name  # type: ignore[attr-defined]
+    for key, val in kwargs.items():
+        setattr(df, key, val)
+    return df
+
+
+def _plot_paths(t: npt.NDArray[np.floating], x: npt.NDArray[np.floating],
+                 y: npt.NDArray[np.floating], title: str,
+                 label1: str, label2: str) -> None:
+    """Shared two-line time-series plot used by every process's ``.plot()``."""
+    plt.figure(figsize=(12, 6))
+    plt.plot(t, x, label=label1)
+    plt.plot(t, y, label=label2)
+    plt.xlabel('Time')
+    plt.ylabel('Value')
+    plt.title(title)
+    plt.legend()
+    plt.grid(True)
+    plt.show()
 
 
 class BivariateOUProcess:
@@ -80,38 +110,29 @@ class BivariateOUProcess:
         self.x[0] = mu1
         self.y[0] = mu2
 
-    def simulate(self, seed=False) -> None:
+    def simulate(self, seed: Union[int, bool] = False) -> None:
+        """Simulate one path via Euler-Maruyama discretization (sequential by construction)."""
         if seed:
             np.random.seed(seed)
         for i in range(1, self.n_steps):
             z = np.random.normal(size=2)
-            dz = np.dot(self.L, z) * np.sqrt(self.dt)
+            dz = self.L @ z * np.sqrt(self.dt)
             self.x[i] = self.x[i - 1] + self.theta1 * (self.mu1 - self.x[i - 1]) * self.dt + self.sigma1 * dz[0]
             self.y[i] = self.y[i - 1] + self.theta2 * (self.mu2 - self.y[i - 1]) * self.dt + self.sigma2 * dz[1]
 
-    def dataframe(self, **kwargs) -> pd.DataFrame:
-        df = pd.DataFrame(
-            np.matrix([self.x, self.y]).T,
-            columns=['process 1', 'process 2'],
-        )
-        df.name = 'Ornstein Uhlenbeck'
-        for key, val in kwargs.items():
-            setattr(df, key, val)
-        return df
+    def dataframe(self, **kwargs: Any) -> pd.DataFrame:
+        """Return the simulated path as a labeled two-column DataFrame."""
+        return _to_dataframe(self.x, self.y, 'Ornstein Uhlenbeck', **kwargs)
 
-    def config(self) -> tuple:
+    def config(self) -> tuple[pd.DataFrame, float, int]:
+        """Return ``(data, T, n_steps)`` for downstream estimators."""
         return self.dataframe(), self.T, self.n_steps
 
     def plot(self) -> None:
-        plt.figure(figsize=(12, 6))
-        plt.plot(self.t, self.x, label='OU Process 1')
-        plt.plot(self.t, self.y, label='OU Process 2')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.title('Bivariate Correlated Ornstein-Uhlenbeck Process')
-        plt.legend()
-        plt.grid(True)
-        plt.show()
+        """Plot both process paths against time."""
+        _plot_paths(self.t, self.x, self.y,
+                    'Bivariate Correlated Ornstein-Uhlenbeck Process',
+                    'OU Process 1', 'OU Process 2')
 
 
 class BivariateCorrelatedBM:
@@ -160,38 +181,29 @@ class BivariateCorrelatedBM:
         self.x = np.zeros(self.n_steps)
         self.y = np.zeros(self.n_steps)
 
-    def simulate(self, seed=False) -> None:
+    def simulate(self, seed: Union[int, bool] = False) -> None:
+        """Simulate one path via Euler-Maruyama discretization (sequential by construction)."""
         if seed:
             np.random.seed(seed)
         for i in range(1, self.n_steps):
             z = np.random.normal(size=2)
-            dz = np.dot(self.L, z) * np.sqrt(self.dt)
+            dz = self.L @ z * np.sqrt(self.dt)
             self.x[i] = self.x[i - 1] + self.mu1 * self.dt + self.sigma1 * dz[0]
             self.y[i] = self.y[i - 1] + self.mu2 * self.dt + self.sigma2 * dz[1]
 
-    def dataframe(self, **kwargs) -> pd.DataFrame:
-        df = pd.DataFrame(
-            np.matrix([self.x, self.y]).T,
-            columns=['process 1', 'process 2'],
-        )
-        df.name = 'Correlated Brownian motion'
-        for key, val in kwargs.items():
-            setattr(df, key, val)
-        return df
+    def dataframe(self, **kwargs: Any) -> pd.DataFrame:
+        """Return the simulated path as a labeled two-column DataFrame."""
+        return _to_dataframe(self.x, self.y, 'Correlated Brownian motion', **kwargs)
 
-    def config(self) -> tuple:
+    def config(self) -> tuple[pd.DataFrame, float, int]:
+        """Return ``(data, T, n_steps)`` for downstream estimators."""
         return self.dataframe(), self.T, self.n_steps
 
     def plot(self) -> None:
-        plt.figure(figsize=(12, 6))
-        plt.plot(self.t, self.x, label='Correlated BM Process 1')
-        plt.plot(self.t, self.y, label='Correlated BM Process 2')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.title('Bivariate Correlated Brownian Motion')
-        plt.legend()
-        plt.grid(True)
-        plt.show()
+        """Plot both process paths against time."""
+        _plot_paths(self.t, self.x, self.y,
+                    'Bivariate Correlated Brownian Motion',
+                    'Correlated BM Process 1', 'Correlated BM Process 2')
 
 
 class BivariateNonHomogeneous:
@@ -237,44 +249,37 @@ class BivariateNonHomogeneous:
         self.y = np.zeros(self.n_steps)
 
     def mu(self, x: float, t: float) -> float:
+        """Drift term: -2x (mean-reverting toward the origin)."""
         return -2 * x
 
     def sigma(self, t: float) -> float:
+        """Time-varying (non-homogeneous) volatility: 2.01 + alpha * sin(16*pi*t/T)."""
         return 2.01 + self.alpha * np.sin(16 * np.pi * t / self.T)
 
-    def simulate(self, seed=False) -> None:
+    def simulate(self, seed: Union[int, bool] = False) -> None:
+        """Simulate one path via Euler-Maruyama discretization (sequential by construction)."""
         if seed:
             np.random.seed(seed)
         for i in range(1, self.n_steps):
             z = np.random.normal(size=2)
-            dz = np.dot(self.L, z) * np.sqrt(self.dt)
+            dz = self.L @ z * np.sqrt(self.dt)
             t = i * self.dt
             self.x[i] = self.x[i - 1] + self.b * self.mu(self.x[i - 1], t) * self.dt + self.sigma(t) * dz[0]
             self.y[i] = self.y[i - 1] + self.b * self.mu(self.y[i - 1], t) * self.dt + self.sigma(t) * dz[1]
 
-    def dataframe(self, **kwargs) -> pd.DataFrame:
-        df = pd.DataFrame(
-            np.matrix([self.x, self.y]).T,
-            columns=['process 1', 'process 2'],
-        )
-        df.name = 'Correlated Diffusion'
-        for key, val in kwargs.items():
-            setattr(df, key, val)
-        return df
+    def dataframe(self, **kwargs: Any) -> pd.DataFrame:
+        """Return the simulated path as a labeled two-column DataFrame."""
+        return _to_dataframe(self.x, self.y, 'Correlated Diffusion', **kwargs)
 
-    def config(self) -> tuple:
+    def config(self) -> tuple[pd.DataFrame, float, int]:
+        """Return ``(data, T, n_steps)`` for downstream estimators."""
         return self.dataframe(), self.T, self.n_steps
 
     def plot(self) -> None:
-        plt.figure(figsize=(12, 6))
-        plt.plot(self.t, self.x, label='Correlated diffusion Process 1')
-        plt.plot(self.t, self.y, label='Correlated diffusion Process 2')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.title('Bivariate Non-Homogeneous Diffusion')
-        plt.legend()
-        plt.grid(True)
-        plt.show()
+        """Plot both process paths against time."""
+        _plot_paths(self.t, self.x, self.y,
+                    'Bivariate Non-Homogeneous Diffusion',
+                    'Correlated diffusion Process 1', 'Correlated diffusion Process 2')
 
 
 class BivariateCorrelatedDiffusion:
@@ -335,12 +340,13 @@ class BivariateCorrelatedDiffusion:
         bp = 2 * x * self.gamma * (1 + x ** 2) ** (self.gamma - 1)
         return 0.5 * bo * bp * (dz ** 2 - dt)
 
-    def simulate(self, seed=False) -> None:
+    def simulate(self, seed: Union[int, bool] = False) -> None:
+        """Simulate one path via the Milstein scheme (sequential by construction)."""
         if seed:
             np.random.seed(seed)
         for i in range(1, self.n_steps):
             z = np.random.normal(size=2)
-            dz = np.dot(self.L, z) * np.sqrt(self.dt)
+            dz = self.L @ z * np.sqrt(self.dt)
             self.x[i] = (
                 self.x[i - 1]
                 + self.mu1 * self.dt
@@ -354,26 +360,16 @@ class BivariateCorrelatedDiffusion:
                 + self._milstein_correction(self.y[i - 1], dz[1], self.dt)
             )
 
-    def dataframe(self, **kwargs) -> pd.DataFrame:
-        df = pd.DataFrame(
-            np.matrix([self.x, self.y]).T,
-            columns=['process 1', 'process 2'],
-        )
-        df.name = 'Correlated Diffusion'
-        for key, val in kwargs.items():
-            setattr(df, key, val)
-        return df
+    def dataframe(self, **kwargs: Any) -> pd.DataFrame:
+        """Return the simulated path as a labeled two-column DataFrame."""
+        return _to_dataframe(self.x, self.y, 'Correlated Diffusion', **kwargs)
 
-    def config(self) -> tuple:
+    def config(self) -> tuple[pd.DataFrame, float, int]:
+        """Return ``(data, T, n_steps)`` for downstream estimators."""
         return self.dataframe(), self.T, self.n_steps
 
     def plot(self) -> None:
-        plt.figure(figsize=(12, 6))
-        plt.plot(self.t, self.x, label='Correlated diffusion Process 1')
-        plt.plot(self.t, self.y, label='Correlated diffusion Process 2')
-        plt.xlabel('Time')
-        plt.ylabel('Value')
-        plt.title('Bivariate Correlated Diffusion')
-        plt.legend()
-        plt.grid(True)
-        plt.show()
+        """Plot both process paths against time."""
+        _plot_paths(self.t, self.x, self.y,
+                    'Bivariate Correlated Diffusion',
+                    'Correlated diffusion Process 1', 'Correlated diffusion Process 2')
