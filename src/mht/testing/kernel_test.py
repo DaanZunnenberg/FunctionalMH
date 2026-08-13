@@ -18,10 +18,11 @@ from __future__ import annotations
 
 import itertools
 from itertools import accumulate
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from scipy.linalg import sqrtm
 from sklearn.neighbors import KernelDensity
@@ -37,16 +38,113 @@ __VERSION__: str = '1.0.5'
 # Module-level helpers
 # ---------------------------------------------------------------------------
 
-def running_maximum(X) -> list:
+def running_maximum(X: npt.ArrayLike) -> list:
+    """Cumulative running maximum of ``|X|``."""
     return list(accumulate(np.abs(X), max))
 
 
-def simple_sequence(X, pct: float = 0.3) -> float:
+def simple_sequence(X: npt.NDArray[np.floating], pct: float = 0.3) -> float:
+    """``pct`` fraction of the range of ``X`` (flattened)."""
     return pct * (np.max(X.flatten()) - np.min(X.flatten()))
 
 
-def isiterable(obj, type=list) -> bool:
+def isiterable(obj: Any, type: type = list) -> bool:
+    """Return ``True`` if ``obj`` is an instance of ``type`` (default: list)."""
     return isinstance(obj, type)
+
+
+def gumbel_running_max_bound(n: int, alpha: float) -> list:
+    """
+    Asymptotic (Gumbel-type) critical bound for the running maximum of a
+    standardised Gaussian process of length ``n``, at confidence ``alpha``.
+
+    Shared by :class:`ResultSummary`, :class:`Simulator`, and
+    :class:`TestPlotter`, all of which compare an empirical running maximum
+    against this theoretical threshold (see Pickands 1969; Berman 1964).
+    """
+    x = -np.log(np.log(1 / alpha))
+    an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
+    bn = [
+        np.sqrt(2 * np.log(z))
+        - ((np.log(np.log(z)) + np.log(np.pi)) / (2 * np.sqrt(2 * np.log(z))))
+        for z in range(1, n + 1)
+    ]
+    return [np.nan] + [(x / an[i]) + bn[i] for i in range(1, n)]
+
+
+# ---------------------------------------------------------------------------
+# Shared bookkeeping mixin (Test and KernelTest share this machinery)
+# ---------------------------------------------------------------------------
+
+class _EstimatorBookkeepingMixin:
+    """
+    Shared introspection/repr machinery and fixed algebraic constants used
+    by both the deprecated :class:`Test` and current :class:`KernelTest`.
+
+    ``duplication`` and ``VECH_VEC`` are fixed 3x4 / 4x4 matrices that
+    implement the vech/vec duplication mapping for symmetric 2x2 matrices
+    (see Magnus & Neudecker, duplication matrix theory) used throughout the
+    covariance transformations of the diffusion-matrix estimators.
+    """
+
+    @staticmethod
+    def _form(shape: tuple[int, int], sep: str = '\n', fmt: str = r'{}') -> str:
+        f: str = ''
+        for _ in range(shape[1]):
+            f += shape[0] * fmt + sep
+        return f
+
+    def __repr__(self) -> str:
+        _repr: str = self._form(shape=(2, len(self.__dict__)))
+        return _repr.format(
+            *list(itertools.chain(*list(zip(self.__dict__.keys(), self.__dict__.values()))))
+        )
+
+    def info(self) -> None:
+        """Print a summary of every attribute currently set on the instance."""
+        for key, val in self.__dict__.items():
+            if isinstance(val, dict):
+                print(key)
+                for k, v in val.items():
+                    print('{:>10} :: {}'.format(k, v))
+            elif isinstance(val, pd.DataFrame):
+                print(key, '::', val.__dict__.get(
+                    'name', 'Nameless dataframe at 0x{:x}'.format(id(val))
+                ))
+            else:
+                print('{:>10} :: {}'.format(key, val))
+
+    def rename_attribute(self, old_name: str) -> None:
+        """Remove attribute ``old_name`` from the instance dict."""
+        self.__dict__.pop(old_name)
+
+    def class_operators(self, remove: bool = False, **kwargs: Any) -> '_EstimatorBookkeepingMixin':
+        """Bulk-set (or, if ``remove``, bulk-delete) attributes from kwargs."""
+        for name, value in kwargs.items():
+            if not remove:
+                self.__setattr__(name, value)
+            else:
+                if hasattr(self, name):
+                    self.__dict__.pop(name)
+        return self
+
+    @property
+    def duplication(self) -> np.ndarray:
+        """3x4 duplication matrix mapping vec(2x2 symmetric) to vech."""
+        return np.array([
+            [.5, .0, .0, .0],
+            [.0, .5, .5, .0],
+            [.0, .0, .0, .5],
+        ])
+
+    @property
+    def VECH_VEC(self) -> np.ndarray:
+        """4x4 selection matrix used in the vech/vec transformation."""
+        return np.array([
+            [1., .0, .0, .0],
+            [.0, 1., .0, .0],
+            [.0, .0, .0, 1.],
+        ])
 
 
 # ---------------------------------------------------------------------------
@@ -59,10 +157,11 @@ class Kernel:
     def __init__(self, *, kernel_params: dict) -> None:
         self.kernel_params = kernel_params
 
-    def BaseKernel(self) -> Callable:
+    def BaseKernel(self) -> Callable[[Any, Any], float]:
+        """Return the bivariate box kernel ``1{|x-y| <= bw} / bw^2`` (per axis)."""
         bandwidth = self.kernel_params.get('bandwidth', NameError)
-        select_kernel: Callable = lambda x, y: (np.abs(x - y) <= bandwidth)
-        base_kernel: Callable = (
+        select_kernel: Callable[[Any, Any], bool] = lambda x, y: (np.abs(x - y) <= bandwidth)
+        base_kernel: Callable[[Any, Any], float] = (
             lambda x, y:
             1 * select_kernel(x.item(0), y.item(0))
             * select_kernel(x.item(1), y.item(1))
@@ -76,7 +175,7 @@ class Kernel:
 # ---------------------------------------------------------------------------
 
 @deprecated('Class Test is deprecated; use KernelTest instead.')
-class Test:
+class Test(_EstimatorBookkeepingMixin):
     """Original test implementation -- kept for backward compatibility."""
 
     def __init__(
@@ -101,60 +200,6 @@ class Test:
             self.info()
 
     @staticmethod
-    def _form(shape: tuple, sep: str = '\n', fmt: str = r'{}') -> str:
-        f: str = ''
-        for _ in range(shape[1]):
-            f += shape[0] * fmt + sep
-        return f
-
-    def __repr__(self) -> str:
-        _repr: str = self._form(shape=(2, len(self.__dict__)))
-        return _repr.format(
-            *list(itertools.chain(*list(zip(self.__dict__.keys(), self.__dict__.values()))))
-        )
-
-    def info(self) -> None:
-        for key, val in self.__dict__.items():
-            if isinstance(val, dict):
-                print(key)
-                for k, v in val.items():
-                    print('{:>10} :: {}'.format(k, v))
-            elif isinstance(val, pd.DataFrame):
-                print(key, '::', val.__dict__.get(
-                    'name', 'Nameless dataframe at 0x{:x}'.format(id(val))
-                ))
-            else:
-                print('{:>10} :: {}'.format(key, val))
-
-    def rename_attribute(self, old_name: str) -> None:
-        self.__dict__.pop(old_name)
-
-    def class_operators(self, remove: bool = False, **kwargs):
-        for name, value in kwargs.items():
-            if not remove:
-                self.__setattr__(name, value)
-            else:
-                if hasattr(self, name):
-                    self.__dict__.pop(name)
-        return self
-
-    @property
-    def duplication(self) -> np.matrix:
-        return np.matrix([
-            [.5, .0, .0, .0],
-            [.0, .5, .5, .0],
-            [.0, .0, .0, .5],
-        ])
-
-    @property
-    def VECH_VEC(self) -> np.matrix:
-        return np.matrix([
-            [1., .0, .0, .0],
-            [.0, 1., .0, .0],
-            [.0, .0, .0, 1.],
-        ])
-
-    @staticmethod
     def integrate_kernel(bandwidth: float, p: int = 2) -> float:
         """Analytic integral of the box kernel (indicator kernel only)."""
         return (2 * bandwidth) / (bandwidth ** (2 * p))
@@ -167,11 +212,9 @@ class Test:
         estimate: list = []
 
         for x in tqdm(X.values, disable=self.disable):
-            sub_estimate: np.matrix = np.eye(2) * 0
-            sliced = DELTA.iloc[X[(X - x).abs() <= bandwidth].dropna().index]
+            sliced = DELTA.iloc[X[(X - x).abs() <= bandwidth].dropna().index].to_numpy()
             norm: float = len(sliced)
-            for y in np.matrix(sliced):
-                sub_estimate += y.T @ y
+            sub_estimate = sliced.T @ sliced if norm else np.zeros((2, 2))
             estimate.append(sub_estimate / (norm * dt))
 
         variance = [
@@ -184,12 +227,12 @@ class Test:
     def time_domain_estimator(self) -> None:
         bandwidth, n_obs, T = self.time_params.values()
         X = self.data
-        DELTA = self.data.diff().fillna(0)
+        DELTA = self.data.diff().fillna(0).to_numpy()
         dt = T / n_obs
-        est = [np.matrix(row).T @ np.matrix(row) for row in np.matrix(DELTA)]
+        est = [np.outer(row, row) for row in DELTA]
 
         runup: int = np.ceil(bandwidth / dt).astype(int)
-        estimate: list = [np.matrix([[np.nan, np.nan], [np.nan, np.nan]])] * runup
+        estimate: list = [np.full((2, 2), np.nan)] * runup
 
         for idx in tqdm(range(runup, len(X)), disable=self.disable):
             estimate.append(np.sum(est[idx - runup:idx], axis=0) / bandwidth)
@@ -202,6 +245,7 @@ class Test:
                                 **{'estimate': estimate, 'variance': variance}}
 
     def gauss(self) -> None:
+        """Compute the standardised Gaussian process from the two estimators."""
         bandwidth_time, _, __ = self.time_params.values()
         bandwidth_state, n_obs, _, __ = self.kernel_params.values()
 
@@ -231,6 +275,7 @@ class Test:
         self.gaussian = gaussian
 
     def transform_1D_gauss(self, alpha: float = 0.95) -> tuple:
+        """Map the multivariate Gaussian process to a scalar statistic + Gumbel bound."""
         x = np.log(1 / np.log(1 / alpha))
         if not hasattr(self, 'gaussian'):
             self.gauss()
@@ -253,7 +298,7 @@ class Test:
 # KernelTest  (was TestV2)
 # ---------------------------------------------------------------------------
 
-class KernelTest:
+class KernelTest(_EstimatorBookkeepingMixin):
     """
     Kernel-based test for time-homogeneity of the diffusion matrix.
 
@@ -297,63 +342,10 @@ class KernelTest:
         if show_object:
             self.info()
 
-    @staticmethod
-    def _form(shape: tuple, sep: str = '\n', fmt: str = r'{}') -> str:
-        f: str = ''
-        for _ in range(shape[1]):
-            f += shape[0] * fmt + sep
-        return f
-
-    def __repr__(self) -> str:
-        _repr: str = self._form(shape=(2, len(self.__dict__)))
-        return _repr.format(
-            *list(itertools.chain(*list(zip(self.__dict__.keys(), self.__dict__.values()))))
-        )
-
-    def info(self) -> None:
-        for key, val in self.__dict__.items():
-            if isinstance(val, dict):
-                print(key)
-                for k, v in val.items():
-                    print('{:>10} :: {}'.format(k, v))
-            elif isinstance(val, pd.DataFrame):
-                print(key, '::', val.__dict__.get(
-                    'name', 'Nameless dataframe at 0x{:x}'.format(id(val))
-                ))
-            else:
-                print('{:>10} :: {}'.format(key, val))
-
-    def rename_attribute(self, old_name: str) -> None:
-        self.__dict__.pop(old_name)
-
-    def class_operators(self, remove: bool = False, **kwargs):
-        for name, value in kwargs.items():
-            if not remove:
-                self.__setattr__(name, value)
-            else:
-                if hasattr(self, name):
-                    self.__dict__.pop(name)
-        return self
-
     @property
-    def duplication(self) -> np.matrix:
-        return np.matrix([
-            [.5, .0, .0, .0],
-            [.0, .5, .5, .0],
-            [.0, .0, .0, .5],
-        ])
-
-    @property
-    def VECH_VEC(self) -> np.matrix:
-        return np.matrix([
-            [1., .0, .0, .0],
-            [.0, 1., .0, .0],
-            [.0, .0, .0, 1.],
-        ])
-
-    @property
-    def projection_mat(self) -> np.matrix:
-        return np.matrix([
+    def projection_mat(self) -> np.ndarray:
+        """3x4 projection matrix used to build the univariate limiting variance."""
+        return np.array([
             [1., .0, .0, .0],
             [.0, .5, .5, .0],
             [.0, .0, .0, 1.],
@@ -376,9 +368,11 @@ class KernelTest:
 
     @staticmethod
     def tau_scalar(tau: float) -> float:
+        """Variance-inflation scalar for the EWMA time-domain smoother."""
         return tau * (1 + np.exp(tau)) / (np.exp(tau) - 1)
 
-    def univ_var(self, A: Any) -> Any:
+    def univ_var(self, A: Union[np.ndarray, list]) -> Union[np.ndarray, list]:
+        """Project a 2x2-covariance (or list thereof) into the 3x3 vech-space limiting variance."""
         P_P = self.projection_mat
         if isiterable(A):
             return [P_P @ np.kron(cov, cov) @ P_P.T for cov in A]
@@ -388,7 +382,7 @@ class KernelTest:
         self,
         lamb: float = 0.94,
         allow_true_var: bool = False,
-        true_var: Any = None,
+        true_var: Optional[list] = None,
     ) -> None:
         """
         Exponentially-weighted time-domain estimator of the diffusion matrix.
@@ -404,14 +398,14 @@ class KernelTest:
         """
         bandwidth, n_obs, T = self.time_params.values()
         X = self.data
-        DELTA = self.data.diff().fillna(0)
+        DELTA = self.data.diff().fillna(0).to_numpy()
         dt = T / n_obs
-        est = [np.matrix(row).T @ np.matrix(row) for row in np.matrix(DELTA)]
+        est = [np.outer(row, row) for row in DELTA]
 
         runup: int = np.ceil(bandwidth / dt).astype(int)
         tau = runup * (1 - lamb)
 
-        nan_mat = np.matrix([[np.nan, np.nan], [np.nan, np.nan]])
+        nan_mat = np.full((2, 2), np.nan)
         estimate: list = [nan_mat.copy()] * runup
         variance: list = [nan_mat.copy()] * runup
         true_pvar: list = [nan_mat.copy()] * runup
@@ -439,7 +433,7 @@ class KernelTest:
         self.time_estimates = {**self.time_estimates,
                                 **{'estimate': estimate, 'variance': variance}}
 
-    def state_domain_smoother(self, dist=None) -> None:
+    def state_domain_smoother(self, dist: Union[bool, list, None] = None) -> None:
         """
         State-domain (kernel) smoother of the diffusion matrix.
 
@@ -469,11 +463,9 @@ class KernelTest:
         fact_pvar: list = []
 
         for idx, x in enumerate(tqdm(X.values, disable=self.disable)):
-            sub_estimate: np.matrix = np.eye(2) * 0
-            sliced = DELTA.iloc[X[(X - x).abs() <= bandwidth].dropna().index]
+            sliced = DELTA.iloc[X[(X - x).abs() <= bandwidth].dropna().index].to_numpy()
             norm: float = len(sliced)
-            for y in np.matrix(sliced):
-                sub_estimate += y.T @ y
+            sub_estimate = sliced.T @ sliced if norm else np.zeros((2, 2))
 
             fact_pvar.append(bandwidth ** 2 / dist[idx])
             estimate.append(sub_estimate / (norm * dt))
@@ -581,17 +573,10 @@ class ResultSummary:
         self.rejections: dict = {}
 
     def _bound(self, alpha: float) -> list:
-        x = -np.log(np.log(1 / alpha))
-        n = len(self.gauss['run_0'])
-        an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
-        bn = [
-            np.sqrt(2 * np.log(z))
-            - ((np.log(np.log(z)) + np.log(np.pi)) / (2 * np.sqrt(2 * np.log(z))))
-            for z in range(1, n + 1)
-        ]
-        return [np.nan] + [(x / an[i]) + bn[i] for i in range(1, n)]
+        """Gumbel-type critical bound for the running maximum at level ``alpha``."""
+        return gumbel_running_max_bound(len(self.gauss['run_0']), alpha)
 
-    def summary(self, alphas: list = (0.90, 0.95, 0.99)) -> None:
+    def summary(self, alphas: Union[list, tuple] = (0.90, 0.95, 0.99)) -> None:
         print(f' {self.name} '.center(70, '-'))
         for alpha in alphas:
             bound = self._bound(alpha)
@@ -612,7 +597,7 @@ class ResultSummary:
 # Simulator  (was simulate)
 # ---------------------------------------------------------------------------
 
-class Simulator:
+class Simulator(_EstimatorBookkeepingMixin):
     """
     Monte Carlo simulation driver.
 
@@ -635,9 +620,9 @@ class Simulator:
     def __init__(
         self,
         number_of_runs: int,
-        config: dict = None,
-        est_config: dict = None,
-        ProcessGenerator=None,
+        config: Optional[dict] = None,
+        est_config: Optional[dict] = None,
+        ProcessGenerator: Optional[type] = None,
     ) -> None:
         self.number_of_runs = number_of_runs
         self.config = config or {}
@@ -651,7 +636,8 @@ class Simulator:
         self.info()
 
     def _generate_config(
-        self, data: pd.DataFrame, T: float, n_obs: int, bandwidth_sequence: list = None
+        self, data: pd.DataFrame, T: float, n_obs: int,
+        bandwidth_sequence: Optional[list] = None
     ) -> dict:
         """
         Build the estimator config dict.
@@ -694,25 +680,12 @@ class Simulator:
 
         return {'data': data, **self.est_config}
 
-    def info(self) -> None:
-        for key, val in self.__dict__.items():
-            if isinstance(val, dict):
-                print(key)
-                for k, v in val.items():
-                    print('{:>10} :: {}'.format(k, v))
-            elif isinstance(val, pd.DataFrame):
-                print(key, '::', val.__dict__.get(
-                    'name', 'Nameless dataframe at 0x{:x}'.format(id(val))
-                ))
-            else:
-                print('{:>10} :: {}'.format(key, val))
-
     def run(
         self,
-        seed: list = None,
-        state_kwargs: dict = None,
-        time_kwargs: dict = None,
-        **test_kwargs,
+        seed: Optional[list] = None,
+        state_kwargs: Optional[dict] = None,
+        time_kwargs: Optional[dict] = None,
+        **test_kwargs: Any,
     ) -> None:
         """
         Execute the simulation loop.
@@ -762,17 +735,11 @@ class Simulator:
         self.results['bound'] = bound
 
     def _bound(self, alpha: float) -> list:
-        n = len(self.results['run_0']['gauss'])
-        x = -np.log(np.log(1 / alpha))
-        an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
-        bn = [
-            np.sqrt(2 * np.log(z))
-            - ((np.log(np.log(z)) + np.log(np.pi)) / (2 * np.sqrt(2 * np.log(z))))
-            for z in range(1, n + 1)
-        ]
-        return [np.nan] + [(x / an[i]) + bn[i] for i in range(1, n)]
+        """Gumbel-type critical bound for the running maximum at level ``alpha``."""
+        return gumbel_running_max_bound(len(self.results['run_0']['gauss']), alpha)
 
-    def summary(self, alphas: list = (0.95,)) -> None:
+    def summary(self, alphas: Union[list, tuple] = (0.95,)) -> None:
+        """Print rejection rates of the running-maximum test at each alpha."""
         for alpha in alphas:
             bound = self._bound(alpha)
             rate = np.sum([
@@ -785,7 +752,8 @@ class Simulator:
                 np.round(100 * alpha, 0),
             ))
 
-    def plot_results(self, **kwargs) -> None:
+    def plot_results(self, **kwargs: Any) -> None:
+        """Plot per-run running maxima with theoretical Gumbel bounds, plus a histogram."""
         bound1 = self._bound(0.99)
         bound5 = self._bound(0.95)
         bound10 = self._bound(0.90)
@@ -829,18 +797,11 @@ class TestPlotter(KernelTest):
             self.__setattr__(key, val)
 
     def _bound(self, alpha: float) -> list:
-        x = -np.log(np.log(1 / alpha))
+        """Gumbel-type critical bound for the running maximum at level ``alpha``."""
         if not hasattr(self, 'gaussian'):
             self.gauss()
             print('Gaussian process computed.')
-        n = len(self.gaussian)
-        an = [np.sqrt(2 * np.log(z)) for z in range(1, n + 1)]
-        bn = [
-            np.sqrt(2 * np.log(z))
-            - ((np.log(np.log(z)) + np.log(np.pi)) / (2 * np.sqrt(2 * np.log(z))))
-            for z in range(1, n + 1)
-        ]
-        return [np.nan] + [(x / an[i]) + bn[i] for i in range(1, n)]
+        return gumbel_running_max_bound(len(self.gaussian), alpha)
 
     def plot_running_maximum(self) -> None:
         _, scalar_gauss = self.transform_1D_gauss()
@@ -876,7 +837,11 @@ class TestPlotter(KernelTest):
         fig.tight_layout()
         plt.show()
 
-    def plot_estimates(self, true_sigma1=None, true_sigma2=None) -> None:
+    def plot_estimates(
+        self,
+        true_sigma1: Optional[npt.ArrayLike] = None,
+        true_sigma2: Optional[npt.ArrayLike] = None,
+    ) -> None:
         """
         Plot state- and time-domain volatility estimates alongside
         optional true volatility paths.
