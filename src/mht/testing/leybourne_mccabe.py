@@ -3,9 +3,13 @@ Leybourne-McCabe stationarity test.
 
 Single canonical implementation -- imported by hypothesis.py.
 """
+from __future__ import annotations
+
 import warnings
+from typing import Optional, Union
 
 import numpy as np
+import numpy.typing as npt
 from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.regression.linear_model import OLS
 from statsmodels.tools.tools import add_constant
@@ -125,7 +129,9 @@ class Leybourne:
         cvdict = {"1%": crit_value[0], "5%": crit_value[1], "10%": crit_value[2]}
         return pvalue, cvdict
 
-    def _tsls_arima(self, x: np.ndarray, arlags: int, model: str):
+    def _tsls_arima(
+        self, x: npt.NDArray[np.floating], arlags: int, model: str
+    ) -> tuple[npt.NDArray[np.floating], float, npt.NDArray[np.floating]]:
         """
         Two-stage least-squares approach for estimating ARIMA(p, 1, 1)
         parameters as an alternative to MLE in case of solver non-convergence.
@@ -163,7 +169,7 @@ class Leybourne:
         theta = olsfit.params[len(olsfit.params) - 1]
         return arparams, theta, olsfit.resid
 
-    def _autolag(self, x: np.ndarray) -> int:
+    def _autolag(self, x: npt.NDArray[np.floating]) -> int:
         """
         Empirical AR lag detection.
 
@@ -180,12 +186,12 @@ class Leybourne:
 
     def run(
         self,
-        x,
-        arlags: int = 1,
+        x: npt.ArrayLike,
+        arlags: Optional[int] = 1,
         regression: str = 'c',
         method: str = 'mle',
         varest: str = 'var94',
-    ) -> tuple:
+    ) -> tuple[float, float, int, dict[str, float]]:
         """
         Run the Leybourne-McCabe stationarity test.
 
@@ -247,11 +253,10 @@ class Leybourne:
         var99 = abs(theta * np.sum(resids ** 2) / len(resids))
 
         # Build filtered series z(t) = x(t) - sum_j arcoeffs[j] * x(t-j-1)
-        z = np.full(len(x) - arlags, np.inf)
-        for i in range(len(z)):
-            z[i] = x[i + arlags]
-            for j, coef in enumerate(arcoeffs):
-                z[i] -= coef * x[i + arlags - j - 1]
+        n_z = len(x) - arlags
+        z = x[arlags:arlags + n_z, 0].astype(float).copy()
+        for j, coef in enumerate(arcoeffs):
+            z -= coef * x[arlags - j - 1:arlags - j - 1 + n_z, 0]
 
         if regression == 'c':
             resids = z - z.mean()
@@ -265,6 +270,14 @@ class Leybourne:
         pvalue, cvdict = self._interpolate_pvalue(lmstat, regression)
         return lmstat, pvalue, arlags, cvdict
 
-    def __call__(self, x, arlags=None, regression='c', method='mle', varest='var94'):
+    def __call__(
+        self,
+        x: npt.ArrayLike,
+        arlags: Optional[int] = None,
+        regression: str = 'c',
+        method: str = 'mle',
+        varest: str = 'var94',
+    ) -> tuple[float, float, int, dict[str, float]]:
+        """Alias for :meth:`run`. Note the default ``arlags`` differs (None => autolag)."""
         return self.run(x, arlags=arlags, regression=regression,
                         method=method, varest=varest)
