@@ -37,3 +37,6 @@ htmlcov/
 
 # Private
 CLAUDE.md
+
+# Local Claude Code agent config (not meant to be shared/committed)
+.claude/
