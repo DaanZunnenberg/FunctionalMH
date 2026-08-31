@@ -147,3 +147,7 @@ tests/
   *Journal of Business and Economic Statistics*, 12: 157–166.
 - Meyn, S.P., & Tweedie, R.L. (2009). *Markov Chains and Stochastic Stability* (2nd ed.).
   Cambridge University Press.
+
+---
+
+_Last reviewed: 2026-08-31._
